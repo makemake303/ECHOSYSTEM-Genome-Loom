@@ -1,16 +1,20 @@
 import React, { createContext, useContext, useState, useRef } from 'react'
 import { Genome, Gene, GeneType } from '../types/genome'
-import { STEP_COUNT } from '../renderer/geometry'
+import {
+  CANVAS_SIZE,
+  STEP_COUNT,
+  socketPosition,
+} from '../renderer/geometry'
 
 type GenomeContext = {
   genome: Genome
   selectedGene: GeneType
-  setSelectedGene: (g: GeneType)=>void
-  updateAnatomy: (patch: Partial<Genome['anatomy']>)=>void
-  placeGene: (pos:{x:number,y:number})=>void
-  dreamGenome: ()=>void
-  undo: ()=>void
-  clear: ()=>void
+  setSelectedGene: (g: GeneType) => void
+  updateAnatomy: (patch: Partial<Genome['anatomy']>) => void
+  placeGene: (pos: { x: number; y: number }) => void
+  dreamGenome: () => void
+  undo: () => void
+  clear: () => void
 }
 
 const defaultAnatomy = {
@@ -25,107 +29,113 @@ const defaultAnatomy = {
 }
 
 const makeEmptyGenome = (): Genome => ({
-  rings: Array.from({length:6}).map(()=>({sockets: Array.from({length:STEP_COUNT}).map(()=>({gene: null}))})),
-  anatomy: {...defaultAnatomy}
+  rings: Array.from({ length: 6 }).map(() => ({ sockets: Array.from({ length: STEP_COUNT }).map(() => ({ gene: null })) })),
+  anatomy: { ...defaultAnatomy },
 })
 
 const initialGenome = makeEmptyGenome()
 
 const ctx = createContext<GenomeContext | undefined>(undefined)
 
-export function GenomeProvider({children}:{children:React.ReactNode}){
+function cloneGenome(value: Genome): Genome {
+  if (typeof structuredClone === 'function') {
+    return structuredClone(value)
+  }
+  return JSON.parse(JSON.stringify(value)) as Genome
+}
+
+export function GenomeProvider({ children }: { children: React.ReactNode }) {
   const [genome, setGenome] = useState<Genome>(initialGenome)
   const [selectedGene, setSelectedGene] = useState<GeneType>('bead')
   const historyRef = useRef<Genome[]>([])
 
-  function pushHistory(current: Genome){
-    historyRef.current = [...historyRef.current.slice(-59), structuredClone(current)]
+  function pushHistory(current: Genome) {
+    historyRef.current = [...historyRef.current.slice(-59), cloneGenome(current)]
   }
 
-  function updateAnatomy(patch: Partial<Genome['anatomy']>){
+  function updateAnatomy(patch: Partial<Genome['anatomy']>) {
     pushHistory(genome)
-    setGenome(g=>({ ...structuredClone(g), anatomy: {...structuredClone(g.anatomy), ...patch} }))
+    setGenome((g) => {
+      const next = cloneGenome(g)
+      next.anatomy = { ...next.anatomy, ...patch }
+      return next
+    })
   }
 
-  function placeGene(pos:{x:number,y:number}){
-    // find nearest socket
-    // compute distances
-    const cx = 680/2
-    const cy = 680/2
-    let best = {ring:0,step:0,dist:Infinity}
-    genome.rings.forEach((r, ri)=>{
-      r.sockets.forEach((s, si)=>{
-        // compute socket position using socketPosition dynamically to avoid circular import
-        // lazy require to prevent TS import cycles
-      })
-    })
+  function placeGene(pos: { x: number; y: number }) {
+    const cx = CANVAS_SIZE / 2
+    const cy = CANVAS_SIZE / 2
+    let best = { ring: 0, step: 0, dist: Infinity }
 
-    // import socketPosition dynamically
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { socketPosition } = require('../renderer/geometry')
-
-    genome.rings.forEach((r, ri)=>{
-      r.sockets.forEach((s, si)=>{
-        const p = socketPosition(ri, si, cx, cy)
+    genome.rings.forEach((ring, ringIndex) => {
+      ring.sockets.forEach((_, stepIndex) => {
+        const p = socketPosition(ringIndex, stepIndex, cx, cy)
         const dx = p.x - pos.x
         const dy = p.y - pos.y
-        const d2 = dx*dx + dy*dy
-        if(d2 < best.dist){
-          best = {ring: ri, step: si, dist: d2}
+        const d2 = dx * dx + dy * dy
+        if (d2 < best.dist) {
+          best = { ring: ringIndex, step: stepIndex, dist: d2 }
         }
       })
     })
 
-    if(best.dist === Infinity) return
+    if (best.dist === Infinity) return
     pushHistory(genome)
-    const ng = structuredClone(genome)
-    ng.rings[best.ring].sockets[best.step].gene = {type: selectedGene, weight: 5}
+    const ng = cloneGenome(genome)
+    ng.rings[best.ring].sockets[best.step].gene = { type: selectedGene, weight: 5 }
     setGenome(ng)
   }
 
-  function dreamGenome(){
+  function dreamGenome() {
     pushHistory(genome)
-    const ng = structuredClone(genome)
+    const ng = cloneGenome(genome)
     // clear genes but preserve anatomy
-    ng.rings.forEach((r)=> r.sockets.forEach(s=> s.gene = null))
+    ng.rings.forEach((r) => r.sockets.forEach((s) => (s.gene = null)))
     // place 1-3 genes per ring
-    const types: GeneType[] = ['bead','triangle','ring','stitch']
-    ng.rings.forEach((r, ri)=>{
-      const count = 1 + Math.floor(Math.random()*3)
+    const types: GeneType[] = ['bead', 'triangle', 'ring', 'stitch']
+    ng.rings.forEach((r) => {
+      const count = 1 + Math.floor(Math.random() * 3)
       const chosen = new Set<number>()
-      for(let i=0;i<count;i++){
+      for (let i = 0; i < count; i++) {
         let slot
-        do { slot = Math.floor(Math.random() * r.sockets.length) } while(chosen.has(slot))
+        do {
+          slot = Math.floor(Math.random() * r.sockets.length)
+        } while (chosen.has(slot))
         chosen.add(slot)
-        const t = types[Math.floor(Math.random()*types.length)]
-        r.sockets[slot].gene = {type: t, weight: 2 + Math.floor(Math.random()*6)}
+        const t = types[Math.floor(Math.random() * types.length)]
+        r.sockets[slot].gene = { type: t, weight: 2 + Math.floor(Math.random() * 6) }
       }
     })
     setGenome(ng)
   }
 
-  function undo(){
+  function undo() {
     const h = historyRef.current
-    if(h.length === 0) return
+    if (h.length === 0) return
     const prev = h[h.length - 1]
     historyRef.current = h.slice(0, -1)
-    setGenome(structuredClone(prev))
+    setGenome(cloneGenome(prev))
   }
 
-  function clear(){
+  function clear() {
     pushHistory(genome)
-    setGenome(makeEmptyGenome())
+    setGenome((current) => {
+      const next = cloneGenome(current)
+      // preserve anatomy, clear genes
+      next.rings.forEach((r) => r.sockets.forEach((s) => (s.gene = null)))
+      return next
+    })
   }
 
   return (
-    <ctx.Provider value={{genome, selectedGene, setSelectedGene, updateAnatomy, placeGene, dreamGenome, undo, clear}}>
+    <ctx.Provider value={{ genome, selectedGene, setSelectedGene, updateAnatomy, placeGene, dreamGenome, undo, clear }}>
       {children}
     </ctx.Provider>
   )
 }
 
-export function useGenome(){
+export function useGenome() {
   const v = useContext(ctx)
-  if(!v) throw new Error('useGenome must be used inside provider')
+  if (!v) throw new Error('useGenome must be used inside provider')
   return v
 }
