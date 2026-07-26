@@ -1,70 +1,124 @@
-import React, { createContext, useContext, useState } from 'react'
-import { Genome, Gene } from '../types/genome'
+import React, { createContext, useContext, useState, useRef } from 'react'
+import { Genome, Gene, GeneType } from '../types/genome'
+import { STEP_COUNT } from '../renderer/geometry'
 
 type GenomeContext = {
   genome: Genome
-  body: Genome['body']
-  eye: Genome['eye']
-  chi: number
-  selectedGene: string
-  translationFidelity: number
-  bodyInfluence: number
-  setBody: (b: Genome['body'])=>void
-  setEye: (e: Genome['eye'])=>void
-  setChi: (n:number)=>void
+  selectedGene: GeneType
+  setSelectedGene: (g: GeneType)=>void
+  updateAnatomy: (patch: Partial<Genome['anatomy']>)=>void
   placeGene: (pos:{x:number,y:number})=>void
+  dreamGenome: ()=>void
   undo: ()=>void
   clear: ()=>void
-  setSelectedGene: (g:string)=>void
-  setTranslationFidelity: (n:number)=>void
-  setBodyInfluence: (n:number)=>void
 }
 
-const initialGenome: Genome = {
-  body: 'Seed',
-  eye: 'Bright',
-  rings: Array.from({length:6}).map(()=>({sockets: Array.from({length:16}).map(()=>({gene: null}))})),
+const defaultAnatomy = {
+  body: 'Seed' as const,
+  eye: 'Bright' as const,
+  chiForm: 'Orbiting Beads' as const,
+  chiMotion: 'Orbit' as const,
+  chiDensity: 8,
+  translationFidelity: 80,
+  bodyInfluence: 50,
+  bpm: 90,
 }
+
+const makeEmptyGenome = (): Genome => ({
+  rings: Array.from({length:6}).map(()=>({sockets: Array.from({length:STEP_COUNT}).map(()=>({gene: null}))})),
+  anatomy: {...defaultAnatomy}
+})
+
+const initialGenome = makeEmptyGenome()
 
 const ctx = createContext<GenomeContext | undefined>(undefined)
 
 export function GenomeProvider({children}:{children:React.ReactNode}){
   const [genome, setGenome] = useState<Genome>(initialGenome)
-  const [body, setBody] = useState(genome.body)
-  const [eye, setEye] = useState<Genome['eye']>(genome.eye || 'Bright')
-  const [chi, setChi] = useState(3)
-  const [selectedGene, setSelectedGene] = useState('bead')
-  const [translationFidelity, setTranslationFidelity] = useState(80)
-  const [bodyInfluence, setBodyInfluence] = useState(50)
+  const [selectedGene, setSelectedGene] = useState<GeneType>('bead')
+  const historyRef = useRef<Genome[]>([])
 
-  const history: Genome[] = []
+  function pushHistory(current: Genome){
+    historyRef.current = [...historyRef.current.slice(-59), structuredClone(current)]
+  }
+
+  function updateAnatomy(patch: Partial<Genome['anatomy']>){
+    pushHistory(genome)
+    setGenome(g=>({ ...structuredClone(g), anatomy: {...structuredClone(g.anatomy), ...patch} }))
+  }
 
   function placeGene(pos:{x:number,y:number}){
-    // naive placement: map to nearest socket by angle/radius
-    const cx = 400
-    const cy = 300
-    const dx = pos.x - cx
-    const dy = pos.y - cy
-    const angle = Math.atan2(dy,dx)
-    const dist = Math.sqrt(dx*dx+dy*dy)
-    const ringIndex = Math.max(0, Math.min(5, Math.floor((dist - 60) / 60)))
-    const ring = genome.rings[ringIndex] || genome.rings[0]
-    const n = ring.sockets.length
-    const idx = Math.round(((angle + Math.PI/2) / (Math.PI*2)) * n) % n
-    const newGenome = structuredClone(genome)
-    newGenome.rings[ringIndex].sockets[idx].gene = {type: selectedGene}
-    setGenome(newGenome)
+    // find nearest socket
+    // compute distances
+    const cx = 680/2
+    const cy = 680/2
+    let best = {ring:0,step:0,dist:Infinity}
+    genome.rings.forEach((r, ri)=>{
+      r.sockets.forEach((s, si)=>{
+        // compute socket position using socketPosition dynamically to avoid circular import
+        // lazy require to prevent TS import cycles
+      })
+    })
+
+    // import socketPosition dynamically
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { socketPosition } = require('../renderer/geometry')
+
+    genome.rings.forEach((r, ri)=>{
+      r.sockets.forEach((s, si)=>{
+        const p = socketPosition(ri, si, cx, cy)
+        const dx = p.x - pos.x
+        const dy = p.y - pos.y
+        const d2 = dx*dx + dy*dy
+        if(d2 < best.dist){
+          best = {ring: ri, step: si, dist: d2}
+        }
+      })
+    })
+
+    if(best.dist === Infinity) return
+    pushHistory(genome)
+    const ng = structuredClone(genome)
+    ng.rings[best.ring].sockets[best.step].gene = {type: selectedGene, weight: 5}
+    setGenome(ng)
+  }
+
+  function dreamGenome(){
+    pushHistory(genome)
+    const ng = structuredClone(genome)
+    // clear genes but preserve anatomy
+    ng.rings.forEach((r)=> r.sockets.forEach(s=> s.gene = null))
+    // place 1-3 genes per ring
+    const types: GeneType[] = ['bead','triangle','ring','stitch']
+    ng.rings.forEach((r, ri)=>{
+      const count = 1 + Math.floor(Math.random()*3)
+      const chosen = new Set<number>()
+      for(let i=0;i<count;i++){
+        let slot
+        do { slot = Math.floor(Math.random() * r.sockets.length) } while(chosen.has(slot))
+        chosen.add(slot)
+        const t = types[Math.floor(Math.random()*types.length)]
+        r.sockets[slot].gene = {type: t, weight: 2 + Math.floor(Math.random()*6)}
+      }
+    })
+    setGenome(ng)
   }
 
   function undo(){
-    // simple clear last placed (not full stack) - placeholder
-    // For now just clear all
-    setGenome(initialGenome)
+    const h = historyRef.current
+    if(h.length === 0) return
+    const prev = h[h.length - 1]
+    historyRef.current = h.slice(0, -1)
+    setGenome(structuredClone(prev))
   }
-  function clear(){ setGenome(initialGenome) }
+
+  function clear(){
+    pushHistory(genome)
+    setGenome(makeEmptyGenome())
+  }
 
   return (
-    <ctx.Provider value={{genome, body, eye, chi, selectedGene, translationFidelity, bodyInfluence, setBody:(b)=>{setBody(b); setGenome(g=>({...g, body:b}))}, setEye:(e)=>{setEye(e); setGenome(g=>({...g, eye:e}))}, setChi, placeGene, undo, clear, setSelectedGene, setTranslationFidelity, setBodyInfluence}}>
+    <ctx.Provider value={{genome, selectedGene, setSelectedGene, updateAnatomy, placeGene, dreamGenome, undo, clear}}>
       {children}
     </ctx.Provider>
   )

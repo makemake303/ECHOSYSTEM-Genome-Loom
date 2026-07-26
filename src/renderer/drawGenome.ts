@@ -1,21 +1,18 @@
-import { Genome, Gene, Socket } from '../types/genome'
+import { Genome } from '../types/genome'
+import { socketPosition, CANVAS_SIZE, STEP_COUNT, RING_RADII } from './geometry'
 
 export function drawGenome(ctx: CanvasRenderingContext2D, width: number, height: number, genome: Genome, opts: {selectedGene?: string | null}){
   ctx.clearRect(0,0,width,height)
-  const cx = width/2
-  const cy = height/2
+  const cx = CANVAS_SIZE/2
+  const cy = CANVAS_SIZE/2
   const rings = genome.rings
-  const ringCount = rings.length
-  const baseR = Math.min(width,height) * 0.08
 
   // background
   ctx.fillStyle = '#071827'
   ctx.fillRect(0,0,width,height)
 
-  // draw rings and sockets
   rings.forEach((ring, i)=>{
-    const r = baseR + i * (baseR*0.9)
-    // ring circle
+    const r = RING_RADII[i]
     ctx.strokeStyle = 'rgba(255,255,255,0.04)'
     ctx.beginPath()
     ctx.arc(cx,cy,r,0,Math.PI*2)
@@ -24,16 +21,14 @@ export function drawGenome(ctx: CanvasRenderingContext2D, width: number, height:
     const sockets = ring.sockets
     const n = sockets.length
     sockets.forEach((s, j)=>{
-      const angle = (j / n) * Math.PI * 2 - Math.PI/2
-      const sx = cx + Math.cos(angle) * r
-      const sy = cy + Math.sin(angle) * r
-      // draw socket
+      const pos = socketPosition(i, j, cx, cy)
+      const sx = pos.x
+      const sy = pos.y
       ctx.fillStyle = 'rgba(255,255,255,0.03)'
       ctx.beginPath()
       ctx.arc(sx,sy,8,0,Math.PI*2)
       ctx.fill()
 
-      // draw gene if present
       if(s.gene){
         drawGeneAt(ctx, sx, sy, s.gene.type)
       }
